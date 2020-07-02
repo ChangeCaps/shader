@@ -19,6 +19,12 @@ const int MAX_SHADOW_STEPS = 64;
 
 const int BASE = 1;
 const int MIRROR = 1 << 1;
+const int WATER = 1 << 2;
+const int SAND = 1 << 3;
+
+const int MAIN_RAY = 0;
+const int REFLECTION_RAY = 1;
+const int REFRACTION_RAY = 2;
 
 //////////////////////////
 // Structs
@@ -28,6 +34,7 @@ struct Ray {
 	vec3 origin;
 	vec3 direction;
 	int mask;
+	int type;
 };
 
 struct Hit {
@@ -37,6 +44,7 @@ struct Hit {
 	float distance;
 	int material;
 	int mask;
+	int type;
 };
 
 struct Renderer {
@@ -61,6 +69,15 @@ struct Renderer {
     Ray ray7;
     
 	int num_rays;
+
+	vec3 pass0;
+	vec3 pass1;
+	vec3 pass2;
+	vec3 pass3;
+	vec3 pass4;
+	vec3 pass5;
+	vec3 pass6;
+	vec3 pass7;
 
 	vec3 sun_direction;
 };
@@ -163,11 +180,17 @@ float map(in vec3 position, in int mask, out int material) {
 	material = BASE;
 	float dist = 1e20;
 
-	float sphere = sphere(position, 0.5);
-	mat(dist, sphere, material, BASE, mask);
+	float origin = length(position.xy) - 0.5;
+	mat(dist, origin, material, BASE, mask);
 
-	float plane = plane(position - vec3(0.0, -1.0, 0.0), vec3(0.0, 1.0, 0.0));
-	mat(dist, plane, material, MIRROR, mask);
+	float floor_height = noise(position.xz / 10.0) * 0.5;
+	float floor = plane(position - vec3(0.0, -10.0 + floor_height, 0.0), vec3(0.0, 1.0, 0.0));
+	mat(dist, floor, material, SAND, mask);
+
+	float water_height = noise(position.xz / 50.0 + vec2(pc.time * 0.1, 0.0)) * 6.0;
+	water_height += noise(position.xz / 5.0 + vec2(pc.time * 0.1, 0.0)) * 0.2;
+	float water = plane(position - vec3(0.0, water_height, 0.0), vec3(0.0, 1.0, 0.0));
+	mat(dist, water, material, WATER, mask);
 
 	return dist;
 }
@@ -176,27 +199,28 @@ vec3 normal(in vec3 position, in int mask)
 {
     vec2 e = vec2(1.0,-1.0)*0.5773;
     int material = 0;
-    const float eps = 0.00025;
+    const float eps = 0.0025;
     return normalize(e.xyy * map(position + e.xyy * eps, mask, material) + 
 					 e.yyx * map(position + e.yyx * eps, mask, material) + 
 					 e.yxy * map(position + e.yxy * eps, mask, material) + 
 					 e.xxx * map(position + e.xxx * eps, mask, material) );
 }
 
-bool intersect(in Ray ray, out Hit hit, out int material) {
+bool intersect(in Ray ray, out Hit hit) {
 	float dist = 0.0;
+	int material = 0;
 
 	for (int i = 0; i < MAX_RAY_STEPS; i++) {
 		vec3 ray_position = ray.origin + ray.direction * dist;
 
 		float d = map(ray_position, ray.mask, material);
 
-		if (d < 0.001) {
+		if (abs(d) < 0.01) {
 			break;
 		}
 
 		// do stuff, to avoid white dots
-		if (dist > 100.0) {
+		if (dist > 1000.0) {
 			return false;
 		}
 
@@ -209,6 +233,7 @@ bool intersect(in Ray ray, out Hit hit, out int material) {
 	hit.distance = dist;
 	hit.material = material;
 	hit.mask = ray.mask;
+	hit.type = ray.type;
 	return true;
 }
 
@@ -290,16 +315,60 @@ Hit get_hit(inout Renderer renderer, in int hit) {
     }
 }
 
+void set_pass(inout Renderer renderer, in int pass, in vec3 color) {
+	switch (pass) {
+		case 0: renderer.pass0 = color; break;
+		case 1: renderer.pass1 = color; break;
+		case 2: renderer.pass2 = color; break;
+		case 3: renderer.pass3 = color; break;
+		case 4: renderer.pass4 = color; break;
+		case 5: renderer.pass5 = color; break;
+		case 6: renderer.pass6 = color; break;
+		case 7: renderer.pass7 = color; break;
+	}
+}
+
+vec3 get_pass(inout Renderer renderer, in int pass) {
+	switch (pass) {
+		case 0: return renderer.pass0; break;
+		case 1: return renderer.pass1; break;
+		case 2: return renderer.pass2; break;
+		case 3: return renderer.pass3; break;
+		case 4: return renderer.pass4; break;
+		case 5: return renderer.pass5; break;
+		case 6: return renderer.pass6; break;
+		case 7: return renderer.pass7; break;
+	}
+}
+
 void pass(inout Renderer renderer, in Hit hit) {
 	switch (hit.material) {
 		case MIRROR:
 			Ray mirror_ray;
 			mirror_ray.origin = hit.position + hit.normal * 0.001;
 			mirror_ray.direction = reflect(hit.incident, hit.normal);
-			mirror_ray.mask = MIRROR;
+			mirror_ray.mask = hit.mask + MIRROR;
 
 			add_ray(renderer, mirror_ray);
         
+			break;
+
+		case WATER:
+			Ray refraction_ray;
+			refraction_ray.origin = hit.position - hit.normal * 0.001;
+			refraction_ray.direction = mix(hit.incident, -hit.normal, dot(hit.incident, hit.normal) * -0.1);
+			refraction_ray.mask = hit.mask + WATER;
+			refraction_ray.type = REFRACTION_RAY;
+
+			Ray reflection_ray;
+			reflection_ray.origin = hit.position + hit.normal * 0.001;
+			reflection_ray.direction = reflect(hit.incident, hit.normal);
+			reflection_ray.mask = hit.mask + WATER;
+			reflection_ray.type = REFLECTION_RAY;
+
+			add_ray(renderer, refraction_ray);
+			add_ray(renderer, reflection_ray);
+
 			break;
 
 		default:
@@ -321,6 +390,18 @@ vec3 material_color(inout Renderer renderer, in int hit_index) {
 			color = vec3(0.7);
 			break;
 
+		case WATER:
+			color = vec3(0.2, 0.4, 0.8);
+			break;
+
+		case SAND:
+			color = vec3(
+				0.7 + 0.1 * pow(noise(hit.position.xz * 20.0), 2.0), 
+				0.6 + 0.05 * pow(noise(hit.position.zx * 30.0), 2.0), 
+				0.4
+			) * (1.0 - clamp(pow(noise(hit.position.xz * 30.0), 8.0), 0.0, 1.0));
+			break;
+
 		default:
 			break;
 	}
@@ -331,50 +412,76 @@ vec3 material_color(inout Renderer renderer, in int hit_index) {
 void material_shading(inout Renderer renderer, in int hit_index, in vec3 material, inout vec3 color) {
 	Hit hit = get_hit(renderer, hit_index);
 
+	Ray sun_shadow_ray;
+	sun_shadow_ray.origin = hit.position + hit.normal * 0.001;
+	sun_shadow_ray.direction = renderer.sun_direction;
+	sun_shadow_ray.mask = hit.mask;
+
+	float sun_shadow = shadow(sun_shadow_ray, 4.0);	
+
+	float sun_diffuse = clamp(dot(hit.normal, renderer.sun_direction), 0.0, 1.0);	
+	float sky_diffuse = clamp(0.4 + 0.6 * dot(hit.normal, vec3(0.0, 1.0, 0.0)), 0.0, 1.0);
+	float bounce_diffuse = clamp(0.4 + 0.6 * dot(hit.normal, vec3(0.0, -1.0, 0.0)), 0.0, 1.0);
+
 	switch (hit.material) {
 		case MIRROR:
+			color *= material * sun_diffuse * (0.5 + 0.5 * sun_shadow);
+			break;
+		case WATER:
+			vec3 refraction_color = get_pass(renderer, hit_index + 1);
+			vec3 reflection_color = get_pass(renderer, hit_index + 2);
+
+			Hit refraction_hit = get_hit(renderer, hit_index + 1);
+			Hit reflection_hit = get_hit(renderer, hit_index + 2);
+
+			color = mix(refraction_color, reflection_color, 0.5 + 0.5 * clamp(0.1 * pow(refraction_hit.distance, 2.0), 0.0, 1.0));
+
 			color *= material;
+
+			color += 0.5 * material * vec3(1.0, 0.9, 0.9) * sun_shadow * sun_diffuse;
+			//color += 0.4 * material * vec3(0.3, 0.3, 0.8) * sky_diffuse;
+			//color += 0.15 * material * vec3(0.6, 0.3, 0.2) * bounce_diffuse;
+
 			break;
 		default:
-			Ray sun_shadow_ray;
-			sun_shadow_ray.origin = hit.position + hit.normal * 0.001;
-			sun_shadow_ray.direction = renderer.sun_direction;
-			sun_shadow_ray.mask = hit.mask;
-
-			float sun_shadow = shadow(sun_shadow_ray, 4.0);
-
-			float sun_diffuse = clamp(dot(hit.normal, renderer.sun_direction), 0.0, 1.0);	
-			float sky_diffuse = clamp(0.4 + 0.6 * dot(hit.normal, vec3(0.0, 1.0, 0.0)), 0.0, 1.0);
-			float bounce_diffuse = clamp(0.4 + 0.6 * dot(hit.normal, vec3(0.0, -1.0, 0.0)), 0.0, 1.0);
-
 			color += 1.5 * material * vec3(1.0, 0.9, 0.9) * sun_shadow * sun_diffuse;
-			color += 0.3 * material * vec3(0.3, 0.3, 0.8) * sky_diffuse;
-			color += 0.1 * material * vec3(0.6, 0.3, 0.2) * bounce_diffuse;
+			color += 0.4 * material * vec3(0.3, 0.3, 0.8) * sky_diffuse;
+			color += 0.15 * material * vec3(0.6, 0.3, 0.2) * bounce_diffuse;
 			break;
 	}
+
+	color = mix(color, vec3(0.5, 0.7, 0.9), 1.0 - exp(-0.0000001 * pow(hit.distance, 3)));
 }
 
 void p(inout Renderer renderer, int i) {
 	if (renderer.num_rays > i) {
 		Hit hit;
-		int material;
 	
-		if (intersect(get_ray(renderer, i), hit, material)) {
-			add_hit(renderer, hit);
-	
+		if (intersect(get_ray(renderer, i), hit)) {
+			add_hit(renderer, hit);	
+
 			pass(renderer, hit);
 		}
 	}
 }
 
-void m(inout Renderer renderer, int i, inout vec3 color) {
+vec3 m(inout Renderer renderer, int i) {
+	vec3 color = vec3(0.0);
+
 	if (renderer.num_hits > i) {
 		vec3 material = material_color(renderer, i);
 			
 		material_shading(renderer, i, material, color);
-	} else if (renderer.num_hits == i) {	
-		color = vec3(0.2, 0.2, 0.6);
+		set_pass(renderer, i, color);
+	} else if (renderer.num_hits == i && renderer.num_rays > renderer.num_hits) {	
+		Ray ray = get_ray(renderer, i);
+
+		color = vec3(0.5, 0.7, 0.9) - 0.5 * max(ray.direction.y, 0.0);
+		color = mix(color, vec3(0.5, 0.7, 0.9), exp(-10.0 * max(ray.direction.y, 0.0)));
+		set_pass(renderer, i, color);
 	}
+
+	return color;
 }
 
 vec3 render(in Ray ray) {
@@ -393,18 +500,16 @@ vec3 render(in Ray ray) {
     p(renderer, 6);
     p(renderer, 7);
 
-	vec3 color = vec3(0.0);
+    m(renderer, 7);
+    m(renderer, 6);
+    m(renderer, 5);
+    m(renderer, 4);
+    m(renderer, 3);
+    m(renderer, 2);
+	m(renderer, 1);
+	vec3 color = m(renderer, 0);
 
-    m(renderer, 7, color);
-    m(renderer, 6, color);
-    m(renderer, 5, color);
-    m(renderer, 4, color);
-    m(renderer, 3, color);
-    m(renderer, 2, color);
-	m(renderer, 1, color);
-	m(renderer, 0, color);
-
-	color = pow(color, vec3(0.4545));
+	color = pow(color, vec3(0.8, 0.9, 1.0));
 
 	return color;
 }
@@ -419,6 +524,7 @@ void main() {
 	ray.origin = pc.camera_position;
 	ray.direction = ray_direction;
 	ray.mask = 0;
+	ray.type = MAIN_RAY;
 
     f_color = vec4(render(ray), 1.0);
 }

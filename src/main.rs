@@ -437,7 +437,7 @@ void main() {
             )
             .unwrap();
 
-        unsafe { ShaderModule::new(device.clone(), &sprv.as_binary_u8()) }.unwrap()
+        unsafe { ShaderModule::new(device.clone(), &sprv.as_binary_u8()) }
     };
 
     // NOTE: ShaderModule::*_shader_entry_point calls do not do any error
@@ -462,7 +462,7 @@ void main() {
         )
     };
 
-    let fs = load_fragment_shader(device.clone());
+    let fs = load_fragment_shader(device.clone()).unwrap();
 
     let frag_main = unsafe {
         fs.graphics_entry_point(
@@ -539,10 +539,10 @@ void main() {
         window_size_dependent_setup(&images, render_pass.clone(), &mut dynamic_state);
     let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
 
-    let mut camera_rotation = Vector3::new(0.0, 0.0, 0.0);
-    let mut camera_position = Vector3::new(0.0, 0.0, -4.0);
+    let mut camera_rotation = Vector3::new(-3.14 / 6.0, 0.0, 0.0);
+    let mut camera_position = Vector3::new(0.0, 0.5, -4.0);
 
-    let frame_time = std::time::Duration::from_secs_f32(1.0 / 30.0);
+    let frame_time = std::time::Duration::from_secs_f32(1.0 / 40.0);
     let mut next_frame = std::time::Instant::now();
 
     let start = next_frame;
@@ -572,33 +572,39 @@ void main() {
 
             let fs = load_fragment_shader(device.clone());
 
-            let frag_main = unsafe {
-                fs.graphics_entry_point(
-                    CStr::from_bytes_with_nul_unchecked(b"main\0"),
-                    FragInput,
-                    FragOutput,
-                    FragLayout(ShaderStages {
-                        fragment: true,
-                        ..ShaderStages::none()
-                    }),
-                    GraphicsShaderType::Fragment,
-                )
-            };
+            match fs {
+                Ok(fs) => {
+                    let frag_main = unsafe {
+                        fs.graphics_entry_point(
+                            CStr::from_bytes_with_nul_unchecked(b"main\0"),
+                            FragInput,
+                            FragOutput,
+                            FragLayout(ShaderStages {
+                                fragment: true,
+                                ..ShaderStages::none()
+                            }),
+                            GraphicsShaderType::Fragment,
+                        )
+                    };
 
-            graphics_pipeline = Arc::new(
-                GraphicsPipeline::start()
-                    .vertex_input(SingleBufferDefinition::<Vertex>::new())
-                    .vertex_shader(vert_main, ())
-                    .triangle_list()
-                    .viewports_dynamic_scissors_irrelevant(1)
-                    .fragment_shader(frag_main, ())
-                    .cull_mode_front()
-                    .front_face_counter_clockwise()
-                    .depth_stencil_disabled()
-                    .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-                    .build(device.clone())
-                    .unwrap(),
-            );
+                    graphics_pipeline = Arc::new(
+                        GraphicsPipeline::start()
+                            .vertex_input(SingleBufferDefinition::<Vertex>::new())
+                            .vertex_shader(vert_main, ())
+                            .triangle_list()
+                            .viewports_dynamic_scissors_irrelevant(1)
+                            .fragment_shader(frag_main, ())
+                            .cull_mode_front()
+                            .front_face_counter_clockwise()
+                            .depth_stencil_disabled()
+                            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+                            .build(device.clone())
+                            .unwrap(),
+                    );
+                }
+
+                Err(e) => println!("{}", e),
+            }
         };
 
         if std::time::Instant::now() >= next_frame {
@@ -625,6 +631,18 @@ void main() {
                     _ => return,
                 },
 
+                WindowEvent::MouseWheel { delta, .. } => {
+                    let delta = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, delta) => delta,
+                        winit::event::MouseScrollDelta::PixelDelta(delta) => delta.y as f32,
+                    };
+
+                    camera_position +=
+                        euler_to_matrix(camera_rotation) * Vector3::new(0.0, 0.0, delta * 0.1);
+
+                    return;
+                }
+
                 WindowEvent::CursorMoved {
                     position,
                     modifiers,
@@ -636,6 +654,9 @@ void main() {
 
                     if middle_down {
                         if modifiers.shift() {
+                            let movement = Vector3::new(delta.x * -0.005, delta.y * 0.005, 0.0);
+
+                            camera_position += euler_to_matrix(camera_rotation) * movement;
                         } else {
                             camera_rotation.y += delta.x * 0.001;
                             camera_rotation.x += delta.y * 0.001;
