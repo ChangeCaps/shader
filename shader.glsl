@@ -18,6 +18,7 @@ const int MAX_RAY_STEPS = 128;
 const int MAX_SHADOW_STEPS = 64;
 
 const int BASE = 1;
+const int MIRROR = 1 << 1;
 
 //////////////////////////
 // Structs
@@ -32,8 +33,10 @@ struct Ray {
 struct Hit {
 	vec3 position;
 	vec3 normal;
+	vec3 incident;
 	float distance;
 	int material;
+	int mask;
 };
 
 struct Renderer {
@@ -42,16 +45,115 @@ struct Renderer {
 
 	Ray rays[64];
 	int num_rays;
+
+	vec3 sun_direction;
 };
 
 //////////////////////////
 // Functions
 //////////////////////////
 
+/* discontinuous pseudorandom uniformly distributed in [-0.5, +0.5]^3 */
+vec3 random3(vec3 c) {
+	float j = 4096.0*sin(dot(c,vec3(17.0, 59.4, 15.0)));
+	vec3 r;
+	r.z = fract(512.0*j);
+	j *= .125;
+	r.x = fract(512.0*j);
+	j *= .125;
+	r.y = fract(512.0*j);
+	return r-0.5;
+}
+
+/* skew constants for 3d simplex functions */
+const float F3 =  0.3333333;
+const float G3 =  0.1666667;
+
+/* 3d simplex noise */
+float noise(vec3 p) {
+	 /* 1. find current tetrahedron T and it's four vertices */
+	 /* s, s+i1, s+i2, s+1.0 - absolute skewed (integer) coordinates of T vertices */
+	 /* x, x1, x2, x3 - unskewed coordinates of p relative to each of T vertices*/
+	 
+	 /* calculate s and x */
+	 vec3 s = floor(p + dot(p, vec3(F3)));
+	 vec3 x = p - s + dot(s, vec3(G3));
+	 
+	 /* calculate i1 and i2 */
+	 vec3 e = step(vec3(0.0), x - x.yzx);
+	 vec3 i1 = e*(1.0 - e.zxy);
+	 vec3 i2 = 1.0 - e.zxy*(1.0 - e);
+	 	
+	 /* x1, x2, x3 */
+	 vec3 x1 = x - i1 + G3;
+	 vec3 x2 = x - i2 + 2.0*G3;
+	 vec3 x3 = x - 1.0 + 3.0*G3;
+	 
+	 /* 2. find four surflets and store them in d */
+	 vec4 w, d;
+	 
+	 /* calculate surflet weights */
+	 w.x = dot(x, x);
+	 w.y = dot(x1, x1);
+	 w.z = dot(x2, x2);
+	 w.w = dot(x3, x3);
+	 
+	 /* w fades from 0.6 at the center of the surflet to 0.0 at the margin */
+	 w = max(0.6 - w, 0.0);
+	 
+	 /* calculate surflet components */
+	 d.x = dot(random3(s), x);
+	 d.y = dot(random3(s + i1), x1);
+	 d.z = dot(random3(s + i2), x2);
+	 d.w = dot(random3(s + 1.0), x3);
+	 
+	 /* multiply d by w^4 */
+	 w *= w;
+	 w *= w;
+	 d *= w;
+	 
+	 /* 3. return the sum of the four surflets */
+	 return dot(d, vec4(52.0));
+}
+
+float noise(in vec2 p) {
+	return noise(vec3(p, 0.0));
+}
+
+void mat(inout float a, in float b, inout int mat_a, in int mat_b, in int mask) {
+	bool m = (mask & mat_b) > 0;
+
+	mat_a = a < b || m ? mat_a : mat_b;
+	a = a < b || m ? a : b;
+}
+
+//////////////////////////
+// Shapes
+//////////////////////////
+
+float plane(in vec3 position, in vec3 normal) {
+	return dot(abs(position), normal) / length(normal);
+}
+
+float sphere(in vec3 position, in float radius) {
+	return length(position) - radius;
+}
+
+//////////////////////////
+// Rendering
+//////////////////////////
+
 float map(in vec3 position, in int mask, out int material) {
 	material = BASE;
+	float dist = 1e20;
 
-	return length(position) - 0.5;
+	float sphere = sphere(position, 0.5);
+	mat(dist, sphere, material, BASE, mask);
+
+	float plane = plane(position - vec3(0.0, -1.0, 0.0), vec3(0.0, 1.0, 0.0));
+	mat(dist, plane, material, MIRROR, mask);
+
+	return dist;
 }
 
 vec3 normal(in vec3 position, in int mask)
@@ -77,7 +179,8 @@ bool intersect(in Ray ray, out Hit hit, out int material) {
 			break;
 		}
 
-		if (dist > 500.0) {
+		// do stuff, to avoid white dots
+		if (dist > 100.0) {
 			return false;
 		}
 
@@ -85,9 +188,11 @@ bool intersect(in Ray ray, out Hit hit, out int material) {
 	}
 
 	hit.position = ray.origin + ray.direction * dist;
-	hit.distance = dist;
 	hit.normal = normal(hit.position, ray.mask);
+	hit.incident = ray.direction;
+	hit.distance = dist;
 	hit.material = material;
+	hit.mask = ray.mask;
 	return true;
 }
 
@@ -113,46 +218,112 @@ float shadow(in Ray ray, in float sharpness) {
 	return clamp(res, 0.0, 1.0);
 }
 
-void add_pass(inout Renderer renderer, in Ray ray) {
+void add_ray(inout Renderer renderer, in Ray ray) {
 	renderer.rays[renderer.num_rays] = ray;
 	renderer.num_rays++;
 }
 
-vec3 render(in Ray ray) {
+void pass(inout Renderer renderer, in Hit hit) {
+	switch (hit.material) {
+		case MIRROR:
+			Ray mirror_ray;
+			mirror_ray.origin = hit.position + hit.normal * 0.001;
+			mirror_ray.direction = reflect(hit.incident, hit.normal);
+			mirror_ray.mask = MIRROR;
+
+			add_ray(renderer, mirror_ray);
+			break;
+
+		default:
+			break;
+	}
+}
+
+vec3 material_color(inout Renderer renderer, in int hit_index) {
+	Hit hit = renderer.hits[hit_index];
+
 	vec3 color = vec3(0.0);
 
-	Renderer renderer;
-	renderer.num_hits = 0;
-	renderer.num_rays = 0;
-	add_pass(renderer, ray);
-	
-	for (int i = 0; i < renderer.num_rays; i++) {
+	switch (hit.material) {
+		case BASE:
+			color = vec3(1.0);
+			break;
+
+		case MIRROR:
+			color = vec3(0.7);
+			break;
+
+		default:
+			break;
+	}
+
+	return color;
+}
+
+void material_shading(inout Renderer renderer, in int hit_index, in vec3 material, inout vec3 color) {
+	Hit hit = renderer.hits[hit_index];
+
+	switch (hit.material) {
+		case MIRROR:
+			color *= material;
+			break;
+		default:
+			Ray sun_shadow_ray;
+			sun_shadow_ray.origin = hit.position + hit.normal * 0.001;
+			sun_shadow_ray.direction = renderer.sun_direction;
+			sun_shadow_ray.mask = hit.mask;
+
+			float sun_shadow = shadow(sun_shadow_ray, 4.0);
+
+			float sun_diffuse = clamp(dot(hit.normal, renderer.sun_direction), 0.0, 1.0);	
+			float sky_diffuse = clamp(0.4 + 0.6 * dot(hit.normal, vec3(0.0, 1.0, 0.0)), 0.0, 1.0);
+			float bounce_diffuse = clamp(0.4 + 0.6 * dot(hit.normal, vec3(0.0, -1.0, 0.0)), 0.0, 1.0);
+
+			color += 1.5 * material * vec3(1.0, 0.9, 0.9) * sun_shadow * sun_diffuse;
+			color += 0.3 * material * vec3(0.3, 0.3, 0.8) * sky_diffuse;
+			color += 0.1 * material * vec3(0.6, 0.3, 0.2) * bounce_diffuse;
+			break;
+	}
+}
+
+void p(inout Renderer renderer, int i) {
+	if (renderer.num_rays > i) {
 		Hit hit;
 		int material;
-
+	
 		if (intersect(renderer.rays[i], hit, material)) {
 			renderer.hits[renderer.num_hits] = hit;
 			renderer.num_hits += 1;
+	
+			pass(renderer, hit);
 		}
 	}
+}
 
-	if (renderer.num_hits > 0) {
-		for (int i = 0; i >= 0; i--) {
-			Hit hit = renderer.hits[i];
-		
-			switch (hit.material) {
-				case BASE:
-					color = vec3(1.0);
-					break;
-				
-				default:
-
-					break;
-			}
-		}
-	} else {
+void m(inout Renderer renderer, int i, inout vec3 color) {
+	if (renderer.num_hits > i) {
+		vec3 material = material_color(renderer, i);
+			
+		material_shading(renderer, i, material, color);
+	} else {	
 		color = vec3(0.2, 0.2, 0.6);
 	}
+}
+
+vec3 render(in Ray ray) {
+	Renderer renderer;
+	renderer.num_hits = 0;
+	renderer.num_rays = 0;
+	renderer.sun_direction = normalize(vec3(1.0, 1.0, 0.0));
+	add_ray(renderer, ray);
+
+	p(renderer, 0);
+	p(renderer, 1);	
+
+	vec3 color = vec3(0.0);
+
+	m(renderer, 1, color);
+	m(renderer, 0, color);
 
 	color = pow(color, vec3(0.4545));
 
@@ -168,6 +339,7 @@ void main() {
 	Ray ray;
 	ray.origin = pc.camera_position;
 	ray.direction = ray_direction;
+	ray.mask = 0;
 
     f_color = vec4(render(ray), 1.0);
 }

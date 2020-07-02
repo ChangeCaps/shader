@@ -542,7 +542,7 @@ void main() {
     let mut camera_rotation = Vector3::new(0.0, 0.0, 0.0);
     let mut camera_position = Vector3::new(0.0, 0.0, -4.0);
 
-    let frame_time = std::time::Duration::from_secs_f32(1.0 / 60.0);
+    let frame_time = std::time::Duration::from_secs_f32(1.0 / 30.0);
     let mut next_frame = std::time::Instant::now();
 
     let start = next_frame;
