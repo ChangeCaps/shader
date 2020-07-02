@@ -385,7 +385,8 @@ fn main() {
     );
 
     let mut compiler = shaderc::Compiler::new().unwrap();
-    let compiler_options = shaderc::CompileOptions::new().unwrap();
+    let mut compiler_options = shaderc::CompileOptions::new().unwrap();
+    compiler_options.set_optimization_level(shaderc::OptimizationLevel::Performance);
 
     let mut load_vertex_shader = move |device: Arc<Device>| {
         let source = "
@@ -418,7 +419,8 @@ void main() {
     };
 
     let mut compiler = shaderc::Compiler::new().unwrap();
-    let compiler_options = shaderc::CompileOptions::new().unwrap();
+    let mut compiler_options = shaderc::CompileOptions::new().unwrap();
+    compiler_options.set_optimization_level(shaderc::OptimizationLevel::Performance);
 
     let mut load_fragment_shader = move |device: Arc<Device>| {
         let mut f = File::open(&options.file).expect("cant find file");
