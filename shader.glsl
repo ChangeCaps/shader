@@ -40,10 +40,26 @@ struct Hit {
 };
 
 struct Renderer {
-	Hit hits[64];
+	Hit hit0;
+    Hit hit1;
+    Hit hit2;
+    Hit hit3;
+    Hit hit4;
+    Hit hit5;
+    Hit hit6;
+    Hit hit7;
+    
 	int num_hits;
 
-	Ray rays[64];
+	Ray ray0;
+    Ray ray1;
+    Ray ray2;
+    Ray ray3;
+    Ray ray4;
+    Ray ray5;
+    Ray ray6;
+    Ray ray7;
+    
 	int num_rays;
 
 	vec3 sun_direction;
@@ -219,8 +235,59 @@ float shadow(in Ray ray, in float sharpness) {
 }
 
 void add_ray(inout Renderer renderer, in Ray ray) {
-	renderer.rays[renderer.num_rays] = ray;
-	renderer.num_rays++;
+    switch (renderer.num_rays) {
+    	case 0: renderer.ray0 = ray; break;
+        case 1: renderer.ray1 = ray; break;
+        case 2: renderer.ray2 = ray; break;
+        case 3: renderer.ray3 = ray; break;
+        case 4: renderer.ray4 = ray; break;
+        case 5: renderer.ray5 = ray; break;
+        case 6: renderer.ray6 = ray; break;
+        case 7: renderer.ray7 = ray; break;
+    }
+    
+    renderer.num_rays++;
+}
+
+Ray get_ray(inout Renderer renderer, in int ray) {
+    switch (ray) {
+    	case 0: return renderer.ray0; break;
+        case 1: return renderer.ray1; break;
+        case 2: return renderer.ray2; break;
+        case 3: return renderer.ray3; break;
+        case 4: return renderer.ray4; break;
+        case 5: return renderer.ray5; break;
+        case 6: return renderer.ray6; break;
+        case 7: return renderer.ray7; break;
+    }
+}
+
+void add_hit(inout Renderer renderer, in Hit hit) {
+    switch (renderer.num_hits) {
+    	case 0: renderer.hit0 = hit; break;
+        case 1: renderer.hit1 = hit; break;
+        case 2: renderer.hit2 = hit; break;
+        case 3: renderer.hit3 = hit; break;
+        case 4: renderer.hit4 = hit; break;
+        case 5: renderer.hit5 = hit; break;
+        case 6: renderer.hit6 = hit; break;
+        case 7: renderer.hit7 = hit; break;
+    }
+    
+    renderer.num_hits++;
+}
+
+Hit get_hit(inout Renderer renderer, in int hit) {
+    switch (hit) {
+    	case 0: return renderer.hit0; break;
+		case 1: return renderer.hit1; break;
+        case 2: return renderer.hit2; break;
+        case 3: return renderer.hit3; break;
+        case 4: return renderer.hit4; break;
+		case 5: return renderer.hit5; break;
+        case 6: return renderer.hit6; break;
+        case 7: return renderer.hit7; break;
+    }
 }
 
 void pass(inout Renderer renderer, in Hit hit) {
@@ -232,6 +299,7 @@ void pass(inout Renderer renderer, in Hit hit) {
 			mirror_ray.mask = MIRROR;
 
 			add_ray(renderer, mirror_ray);
+        
 			break;
 
 		default:
@@ -240,7 +308,7 @@ void pass(inout Renderer renderer, in Hit hit) {
 }
 
 vec3 material_color(inout Renderer renderer, in int hit_index) {
-	Hit hit = renderer.hits[hit_index];
+	Hit hit = get_hit(renderer, hit_index);
 
 	vec3 color = vec3(0.0);
 
@@ -261,7 +329,7 @@ vec3 material_color(inout Renderer renderer, in int hit_index) {
 }
 
 void material_shading(inout Renderer renderer, in int hit_index, in vec3 material, inout vec3 color) {
-	Hit hit = renderer.hits[hit_index];
+	Hit hit = get_hit(renderer, hit_index);
 
 	switch (hit.material) {
 		case MIRROR:
@@ -291,9 +359,8 @@ void p(inout Renderer renderer, int i) {
 		Hit hit;
 		int material;
 	
-		if (intersect(renderer.rays[i], hit, material)) {
-			renderer.hits[renderer.num_hits] = hit;
-			renderer.num_hits += 1;
+		if (intersect(get_ray(renderer, i), hit, material)) {
+			add_hit(renderer, hit);
 	
 			pass(renderer, hit);
 		}
@@ -305,7 +372,7 @@ void m(inout Renderer renderer, int i, inout vec3 color) {
 		vec3 material = material_color(renderer, i);
 			
 		material_shading(renderer, i, material, color);
-	} else {	
+	} else if (renderer.num_hits == i) {	
 		color = vec3(0.2, 0.2, 0.6);
 	}
 }
@@ -318,10 +385,22 @@ vec3 render(in Ray ray) {
 	add_ray(renderer, ray);
 
 	p(renderer, 0);
-	p(renderer, 1);	
+	p(renderer, 1);
+    p(renderer, 2);
+    p(renderer, 3);
+    p(renderer, 4);
+    p(renderer, 5);
+    p(renderer, 6);
+    p(renderer, 7);
 
 	vec3 color = vec3(0.0);
 
+    m(renderer, 7, color);
+    m(renderer, 6, color);
+    m(renderer, 5, color);
+    m(renderer, 4, color);
+    m(renderer, 3, color);
+    m(renderer, 2, color);
 	m(renderer, 1, color);
 	m(renderer, 0, color);
 
