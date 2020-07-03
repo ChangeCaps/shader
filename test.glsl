@@ -190,47 +190,8 @@ float map(in vec3 position, in int mask, out int material) {
 	material = BASE;
 	float dist = 1e20;
 
-	{
-		const float spacing = 40.0;
-		vec3 r = position;
-		r.x = mod(r.x + 20.0, 40.0) - 20.0;
-		r.z = mod(r.z + 20.0, 40.0) - 20.0;
-		
-		vec2 rand = position.xz - r.xz + 20.0;
-
-		float anglezy = 3.1415 / (6.0 + 2.0 * random21(floor(rand)));
-		float anglexz = 3.1415 * 2.0 * random21(floor(rand.yx));
-		float height = 13.0 + 2.0 * random21(floor(rand.yx));
-		
-		r.x += 2.0 * random21(floor(rand.yx));
-		r.y += 2.0 * random21(floor(rand.xy));
-
-		r.xz *= mat2(cos(anglexz), -sin(anglexz), sin(anglexz), cos(anglexz));
-		r.zy *= mat2(cos(anglezy), -sin(anglezy), sin(anglezy), cos(anglezy));
-		r.xz *= mat2(cos(anglexz), -sin(anglexz), sin(anglexz), cos(anglexz));
-		float main_pole = length(r.xz) - 0.5;
-		main_pole = max(main_pole, r.y - height);
-		main_pole += smoothstep(0.0, 1.0, noise(r * vec3(12.0, 0.2, 12.0))) * 0.02;
-
-		vec3 c = r;
-		c.y = abs(c.y - (height - 2.0)) - 1.0;
-		float cross_pole = length(c.zy) - 0.3;
-		cross_pole = max(max(cross_pole, c.x - 5.0), -(c.x + 5.0));
-		cross_pole += smoothstep(0.0, 1.0, noise(c * vec3(0.2, 12.0, 12.0))) * 0.02;
-
-		float mast = min(main_pole, cross_pole);
-
-		mat(dist, mast * 0.9, material, WOOD, mask);
-	}
-
-	float floor_height = noise(position.xz / 10.0) * 0.5;
-	float floor = plane(position - vec3(0.0, -10.0 + floor_height, 0.0), vec3(0.0, 1.0, 0.0));
-	mat(dist, floor, material, SAND, mask);
-
-	float water_height = noise(position.xz / 20.0 + vec2(pc.time * 0.1, 0.0)) * 6.0;
-	water_height += noise(position.xz / 5.0 + vec2(pc.time * 0.1, 0.0)) * 0.2;
-	float water = plane(position - vec3(0.0, water_height, 0.0), vec3(0.0, 1.0, 0.0));
-	mat(dist, water, material, WATER, mask);
+    dist = box(position, vec3(1.0, 0.5, 1.0));
+    material = MIRROR;
 
 	return dist;
 }
@@ -448,13 +409,16 @@ void material_shading(inout Renderer renderer, in int hit_index, in vec3 materia
 	float sky_diffuse = clamp(0.4 + 0.6 * dot(hit.normal, vec3(0.0, 1.0, 0.0)), 0.0, 1.0);
 	float bounce_diffuse = clamp(0.4 + 0.6 * dot(hit.normal, vec3(0.0, -1.0, 0.0)), 0.0, 1.0);
 
+    vec3 reflection_color;
+
 	switch (hit.material) {
 		case MIRROR:
-			color *= material * sun_diffuse * (0.5 + 0.5 * sun_shadow);
+            reflection_color = get_pass(renderer, hit_index + 1);
+			color = reflection_color * material * sun_diffuse * (0.5 + 0.5 * sun_shadow);
 			break;
 		case WATER:
 			vec3 refraction_color = get_pass(renderer, hit_index + 1);
-			vec3 reflection_color = get_pass(renderer, hit_index + 2);
+			reflection_color = get_pass(renderer, hit_index + 2);
 
 			Hit refraction_hit = get_hit(renderer, hit_index + 1);
 			Hit reflection_hit = get_hit(renderer, hit_index + 2);
