@@ -165,11 +165,15 @@ void mat(inout float a, in float b, inout int mat_a, in int mat_b, in int mask) 
 //////////////////////////
 
 float plane(in vec3 position, in vec3 normal) {
-	return dot(abs(position), normal) / length(normal);
+	return dot(position, normal) / length(normal);
 }
 
 float sphere(in vec3 position, in float radius) {
 	return length(position) - radius;
+}
+
+float box(in vec3 position, in vec3 size) {
+	return length(max(abs(position) - size / 2.0, 0.0));
 }
 
 //////////////////////////
